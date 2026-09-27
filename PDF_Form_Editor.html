@@ -142,13 +142,13 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs
 
 const { PDFDocument, StandardFonts, rgb } = PDFLib;
 
-let pdfBytes = null;        // original file bytes (for pdf-lib at export time)
-let pdfjsDoc = null;        // pdf.js document (for rendering)
+let pdfBytes = null;
+let pdfjsDoc = null;
 let numPages = 1;
 let currentPage = 1;
-let renderScale = 1.3;      // constant across all pages
-let pageDims = {};          // { n: { pdfW, pdfH } } native point size per page
-const overlays = [];        // { type:'image'|'text', page, el, ... }
+let renderScale = 1.3;
+let pageDims = {};
+const overlays = [];
 
 const canvas = document.getElementById('pdfCanvas');
 const ctx = canvas.getContext('2d');
@@ -163,10 +163,16 @@ document.getElementById('pdfInput').addEventListener('change', async (e) => {
   if (!file) return;
   document.getElementById('pdfName').textContent = file.name;
   pdfBytes = new Uint8Array(await file.arrayBuffer());
-  pdfjsDoc = await pdfjsLib.getDocument({ data: pdfBytes.slice() }).promise;
+
+  // SECURITY: isEvalSupported: false disables the vulnerable code path
+  // for CVE-2024-4367. Do not remove.
+  pdfjsDoc = await pdfjsLib.getDocument({
+    data: pdfBytes.slice(),
+    isEvalSupported: false
+  }).promise;
+
   numPages = pdfjsDoc.numPages;
 
-  // fit scale to first page width (~ up to 760px)
   const p1 = await pdfjsDoc.getPage(1);
   const vp1 = p1.getViewport({ scale: 1 });
   renderScale = Math.min(760 / vp1.width, 1.8);
@@ -231,7 +237,7 @@ function removeLightBackground(img) {
   octx.drawImage(img, 0, 0);
   const data = octx.getImageData(0, 0, off.width, off.height);
   const d = data.data;
-  const lo = 130, hi = 195; // luminance band: below lo = opaque ink, above hi = transparent
+  const lo = 130, hi = 195;
   for (let i = 0; i < d.length; i += 4) {
     const lum = (d[i] + d[i+1] + d[i+2]) / 3;
     let a = (hi - lum) / (hi - lo);
@@ -299,7 +305,11 @@ function addOverlay(type, opts) {
     el.addEventListener('click', (ev) => {
       if (ev.target.classList.contains('del')) return;
       const nv = prompt('Edit text:', state.text);
-      if (nv !== null && nv.trim() !== '') { state.text = nv.trim(); el.firstChild ? (el.textContent = nv.trim()) : null; el.textContent = nv.trim(); el.appendChild(del); }
+      if (nv !== null && nv.trim() !== '') {
+        state.text = nv.trim();
+        el.textContent = nv.trim();
+        el.appendChild(del);
+      }
     });
   }
 
@@ -400,9 +410,6 @@ downloadBtn.onclick = async () => {
   downloadBtn.textContent = '⬇️ Download completed PDF';
 };
 
-// Saves a file whether we're running as a published Claude artifact
-// (which requires the sandboxed "downloads" capability) or as a plain
-// local HTML file / browser tab (which can just use a normal <a download>).
 async function saveFile(filename, blob) {
   let downloads = null;
   try {
@@ -415,8 +422,6 @@ async function saveFile(filename, blob) {
     await downloads.save({ filename, data: blob });
     return;
   }
-  // Fallback: ordinary browser download (works when this file is opened
-  // directly, e.g. saved to your computer, or double-clicked from disk).
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
