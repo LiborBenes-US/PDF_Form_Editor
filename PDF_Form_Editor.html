@@ -22,20 +22,38 @@
     --line:#3a352e; --accent:#c98a5f; --accent-ink:#1c1b19; --danger:#e07a5f;
   }
   *{box-sizing:border-box;}
-  html,body{height:100%;}
+  html, body { height:100%; margin:0; overflow:hidden; }
   body{
-    margin:0; background:var(--bg); color:var(--ink);
+    background:var(--bg); color:var(--ink);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-    padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
   }
-  #app{display:flex; min-height:100%; flex-wrap:wrap;}
+  #app{ display:flex; flex-direction:row; height:100vh; overflow:hidden; }
+
   #toolbar{
-    width:300px; flex:0 0 300px; background:var(--panel); border-right:1px solid var(--line);
+    width:300px; flex:0 0 300px;
+    background:var(--panel); border-right:1px solid var(--line);
     padding:20px 18px; display:flex; flex-direction:column; gap:16px;
+    overflow-y:auto;
   }
   h1{color:red; font-size:17px; margin:0 0 2px; letter-spacing:.2px;}
   .sub{color:var(--muted); font-size:12.5px; margin:0 0 6px; line-height:1.4;}
   .row{display:flex; flex-direction:column; gap:8px;}
+
+  #zoomBar{
+    display:none; align-items:center; justify-content:space-between;
+    gap:10px; padding:8px 10px;
+    background:var(--bg); border:1px solid var(--line); border-radius:10px;
+  }
+  #zoomBar .label{font-size:12.5px; color:var(--muted);}
+  #zoomBar .controls{display:flex; align-items:center; gap:6px;}
+  #zoomBar button{
+    width:32px; height:32px; border-radius:8px; border:1px solid var(--line);
+    background:var(--panel); color:var(--ink); cursor:pointer; font-size:17px;
+    line-height:1; padding:0;
+  }
+  #zoomBar button:hover{border-color:var(--accent);}
+  #zoomLevel{min-width:52px; text-align:center; font-size:13px; font-variant-numeric:tabular-nums;}
+
   .fileBtn{
     display:flex; align-items:center; justify-content:center; gap:8px;
     background: var(--bg); border:1px solid var(--line); border-radius:10px;
@@ -64,10 +82,31 @@
   button.primary:disabled{opacity:.4; cursor:not-allowed;}
   button:hover:not(:disabled){filter:brightness(1.05);}
   .hint{font-size:11.5px; color:var(--muted); line-height:1.5; margin-top:auto; padding-top:10px; border-top:1px solid var(--line);}
-  #stage{flex:1 1 480px; overflow:auto; padding:24px; display:flex; justify-content:center; align-items:flex-start;}
+
+  #stage{
+    flex:1 1 auto; min-width:0;
+    display:flex; flex-direction:column;
+    min-height:0; overflow:hidden;
+    background:var(--bg);
+  }
+  #stageViewport{
+    flex:1 1 auto; min-height:0;
+    overflow-y:auto; overflow-x:hidden;
+    padding:24px;
+  }
   #placeholder{color:var(--muted); font-size:14px; margin-top:60px; text-align:center; max-width:280px;}
   #canvasWrap{position:relative; background:#fff; box-shadow:0 2px 18px rgba(0,0,0,.18); display:none;}
   #pdfCanvas{display:block;}
+
+  #hScroll{
+    flex:0 0 auto; height:16px;
+    overflow-x:auto; overflow-y:hidden;
+    background:var(--panel);
+    border-top:1px solid var(--line);
+    display:none;
+  }
+  #hScrollSpacer{height:1px; width:0;}
+
   .overlay{
     position:absolute; touch-action:none; cursor:move;
     border:1.5px dashed transparent;
@@ -76,8 +115,10 @@
   .overlay img{width:100%; height:100%; display:block; pointer-events:none;}
   .text-overlay{
     white-space:nowrap; font-family:Helvetica,Arial,sans-serif; color:#111;
-    display:flex; align-items:center; padding:1px 3px; user-select:none;
+    display:inline-flex; align-items:center; padding:1px 3px; user-select:none;
+    line-height:1;
   }
+  .text-overlay .txt{display:inline-block; line-height:1.1;}
   .ctl{
     position:absolute; width:16px; height:16px; background:var(--accent); border-radius:50%;
     right:-8px; bottom:-8px; cursor:nwse-resize; touch-action:none;
@@ -88,8 +129,13 @@
     line-height:16px; text-align:center; cursor:pointer; font-weight:bold;
   }
   @media (max-width:760px){
-    #toolbar{width:100%; flex:1 1 100%; border-right:none; border-bottom:1px solid var(--line);}
-    #stage{flex:1 1 100%; padding:14px;}
+    #app{flex-direction:column;}
+    #toolbar{
+      width:100%; flex:0 0 auto; max-height:45vh;
+      border-right:none; border-bottom:1px solid var(--line);
+    }
+    #stage{flex:1 1 auto; min-height:0;}
+    #stageViewport{padding:14px;}
   }
 </style>
 </head>
@@ -99,6 +145,15 @@
     <div>
       <h1>🖊️ PDF Form Editor</h1>
       <p class="sub">Runs fully in your browser. Your PDF, sensitive data, & signature never leave this device.</p>
+    </div>
+
+    <div id="zoomBar">
+      <span class="label">Document zoom</span>
+      <div class="controls">
+        <button id="zoomOut" title="Zoom out document">−</button>
+        <span id="zoomLevel">100%</span>
+        <button id="zoomIn" title="Zoom in document">+</button>
+      </div>
     </div>
 
     <div class="row">
@@ -126,13 +181,18 @@
       <button class="primary" id="downloadBtn" disabled>⬇️ Download PDF</button>
     </div>
 
-    <p class="hint">Drag items to position them. Drag the round handle to resize an image. Click a text box's text to edit it. Click the × to remove anything.</p>
+    <p class="hint">Drag items to position them. Drag the round handle to resize an image or change text size. Double-click a text box to edit it. Click the × to remove anything.</p>
   </div>
 
   <div id="stage">
-    <div id="placeholder">Load a PDF to get started. Then add your signature image and type in any text fields you need — drag them into place, and download.</div>
-    <div id="canvasWrap">
-      <canvas id="pdfCanvas"></canvas>
+    <div id="stageViewport">
+      <div id="placeholder">Load a PDF to get started. Then add your signature image and type in any text fields you need — drag them into place, and download.</div>
+      <div id="canvasWrap">
+        <canvas id="pdfCanvas"></canvas>
+      </div>
+    </div>
+    <div id="hScroll">
+      <div id="hScrollSpacer"></div>
     </div>
   </div>
 </div>
@@ -146,8 +206,16 @@ let pdfBytes = null;
 let pdfjsDoc = null;
 let numPages = 1;
 let currentPage = 1;
-let renderScale = 1.3;
-let pageDims = {};
+
+let renderScale = 1.3;   // current canvas zoom (CSS px per PDF pt)
+let fitScale = 1.3;      // canvas zoom that shows 100%
+
+let pageDims = {};       // { n: { pdfW, pdfH } } native point size per page
+
+// Every overlay stores its geometry in PDF points (xPt, yPt, wPt, hPt,
+// fontSizePt). CSS pixel values are recomputed from these on every
+// zoom. Export always uses the point values, so nothing about the
+// sidebar zoom affects the file.
 const overlays = [];
 
 const canvas = document.getElementById('pdfCanvas');
@@ -155,17 +223,51 @@ const ctx = canvas.getContext('2d');
 const canvasWrap = document.getElementById('canvasWrap');
 const placeholder = document.getElementById('placeholder');
 const pageNav = document.getElementById('pageNav');
+const zoomBar = document.getElementById('zoomBar');
 const pageIndicator = document.getElementById('pageIndicator');
+const zoomLevel = document.getElementById('zoomLevel');
 const downloadBtn = document.getElementById('downloadBtn');
+const stageViewport = document.getElementById('stageViewport');
+const hScroll = document.getElementById('hScroll');
+const hScrollSpacer = document.getElementById('hScrollSpacer');
 
+function updateHScroll() {
+  if (!canvasWrap || canvasWrap.style.display === 'none') {
+    hScroll.style.display = 'none';
+    canvasWrap.style.transform = '';
+    return;
+  }
+  const padding = 24;
+  const contentWidth = canvasWrap.offsetWidth + padding * 2;
+  const visibleWidth = stageViewport.clientWidth;
+
+  if (contentWidth > visibleWidth + 1) {
+    hScroll.style.display = 'block';
+    hScrollSpacer.style.width = contentWidth + 'px';
+    const max = contentWidth - visibleWidth;
+    if (hScroll.scrollLeft > max) hScroll.scrollLeft = max;
+    canvasWrap.style.transform = `translateX(${-hScroll.scrollLeft}px)`;
+  } else {
+    hScroll.style.display = 'none';
+    hScroll.scrollLeft = 0;
+    canvasWrap.style.transform = '';
+  }
+}
+
+hScroll.addEventListener('scroll', () => {
+  canvasWrap.style.transform = `translateX(${-hScroll.scrollLeft}px)`;
+});
+
+window.addEventListener('resize', updateHScroll);
+
+// ---------- PDF load ----------
 document.getElementById('pdfInput').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   document.getElementById('pdfName').textContent = file.name;
   pdfBytes = new Uint8Array(await file.arrayBuffer());
 
-  // SECURITY: isEvalSupported: false disables the vulnerable code path
-  // for CVE-2024-4367. Do not remove.
+  // SECURITY: isEvalSupported:false disables CVE-2024-4367 path.
   pdfjsDoc = await pdfjsLib.getDocument({
     data: pdfBytes.slice(),
     isEvalSupported: false
@@ -175,7 +277,9 @@ document.getElementById('pdfInput').addEventListener('change', async (e) => {
 
   const p1 = await pdfjsDoc.getPage(1);
   const vp1 = p1.getViewport({ scale: 1 });
-  renderScale = Math.min(760 / vp1.width, 1.8);
+  const available = Math.max(stageViewport.clientWidth - 48, 300);
+  fitScale = Math.min(available / vp1.width, 1.8);
+  renderScale = fitScale;
 
   pageDims = {};
   for (let i = 1; i <= numPages; i++) {
@@ -188,12 +292,51 @@ document.getElementById('pdfInput').addEventListener('change', async (e) => {
   placeholder.style.display = 'none';
   canvasWrap.style.display = 'inline-block';
   pageNav.style.display = numPages > 1 ? 'flex' : 'none';
+  zoomBar.style.display = 'flex';
+  updateZoomLabel();
   downloadBtn.disabled = false;
   await renderPage(currentPage);
+  updateHScroll();
 });
 
 document.getElementById('prevPage').onclick = () => { if (currentPage > 1) { currentPage--; renderPage(currentPage); refreshOverlayVisibility(); } };
 document.getElementById('nextPage').onclick = () => { if (currentPage < numPages) { currentPage++; renderPage(currentPage); refreshOverlayVisibility(); } };
+
+// ---------- document-only zoom ----------
+document.getElementById('zoomIn').onclick = () => setZoom(renderScale * 1.2);
+document.getElementById('zoomOut').onclick = () => setZoom(renderScale / 1.2);
+
+function updateZoomLabel() {
+  zoomLevel.textContent = Math.round((renderScale / fitScale) * 100) + '%';
+}
+
+// Redraw every overlay's CSS geometry from its point-based geometry.
+function layoutOverlay(o) {
+  o.el.style.left = (o.xPt * renderScale) + 'px';
+  o.el.style.top  = (o.yPt * renderScale) + 'px';
+  if (o.type === 'image') {
+    o.el.style.width  = (o.wPt * renderScale) + 'px';
+    o.el.style.height = (o.hPt * renderScale) + 'px';
+  } else {
+    o.el.style.fontSize = (o.fontSizePt * renderScale) + 'px';
+    const tn = o.el.querySelector('.txt');
+    if (tn) tn.style.fontSize = (o.fontSizePt * renderScale) + 'px';
+  }
+}
+
+async function setZoom(newScale) {
+  newScale = Math.max(0.15, Math.min(6, newScale));
+  if (Math.abs(newScale - renderScale) < 1e-4) return;
+  renderScale = newScale;
+  updateZoomLabel();
+  if (pdfjsDoc) {
+    await renderPage(currentPage);
+    // Only visual: recompute CSS px from point values. Nothing about
+    // the overlay's true size in the PDF is touched.
+    for (const o of overlays) layoutOverlay(o);
+    updateHScroll();
+  }
+}
 
 async function renderPage(n) {
   const page = await pdfjsDoc.getPage(n);
@@ -223,10 +366,17 @@ document.getElementById('imgInput').addEventListener('change', async (e) => {
     finalSrc = removeLightBackground(img);
   }
 
+  // Pick a starting size on screen, then convert it into points.
   const aspect = img.width / img.height;
-  const w = Math.min(160, canvas.width * 0.35);
-  const h = w / aspect;
-  addOverlay('image', { src: finalSrc, w, h, aspect });
+  const wCss = Math.min(160, canvas.width * 0.35);
+  const hCss = wCss / aspect;
+
+  addOverlay('image', {
+    src: finalSrc,
+    aspect,
+    wPt: wCss / renderScale,
+    hPt: hCss / renderScale
+  });
   e.target.value = '';
 });
 
@@ -269,46 +419,74 @@ function loadImage(src) {
 document.getElementById('addTextBtn').onclick = () => {
   const val = document.getElementById('textInput').value.trim();
   if (!val || !pdfjsDoc) return;
-  addOverlay('text', { text: val, fontSize: 14 });
+  // Default text is 14 CSS px on screen. Convert to points using the
+  // current renderScale so the PDF matches what the user sees.
+  addOverlay('text', {
+    text: val,
+    fontSizePt: 11
+  });
   document.getElementById('textInput').value = '';
 };
 
-// ---------- overlay creation & drag/resize ----------
+// ---------- overlays ----------
 function addOverlay(type, opts) {
   const el = document.createElement('div');
   el.className = 'overlay' + (type === 'text' ? ' text-overlay' : '');
-  const startLeft = canvas.width * 0.15;
-  const startTop = canvas.height * 0.5;
 
-  const state = { type, page: currentPage, el };
+  // Starting position in CSS px, then converted to points.
+  const startLeftCss = canvas.clientWidth * 0.15;
+  const startTopCss  = canvas.clientHeight * 0.5;
+
+  const state = {
+    type,
+    page: currentPage,
+    el,
+    xPt: startLeftCss / renderScale,
+    yPt: startTopCss / renderScale
+  };
 
   if (type === 'image') {
-    el.style.width = opts.w + 'px';
-    el.style.height = opts.h + 'px';
-    el.style.left = startLeft + 'px';
-    el.style.top = startTop + 'px';
+    Object.assign(state, {
+      aspect: opts.aspect,
+      src: opts.src,
+      wPt: opts.wPt,
+      hPt: opts.hPt
+    });
+
     const img = document.createElement('img');
     img.src = opts.src;
     el.appendChild(img);
-    Object.assign(state, { w: opts.w, h: opts.h, aspect: opts.aspect, src: opts.src });
 
     const handle = document.createElement('div');
     handle.className = 'ctl';
     el.appendChild(handle);
-    makeResizable(el, handle, state);
+    makeImageResizable(el, handle, state);
   } else {
-    el.style.left = startLeft + 'px';
-    el.style.top = startTop + 'px';
-    el.style.fontSize = opts.fontSize + 'px';
-    el.textContent = opts.text;
-    Object.assign(state, { text: opts.text, fontSize: opts.fontSize });
-    el.addEventListener('click', (ev) => {
-      if (ev.target.classList.contains('del')) return;
+    Object.assign(state, {
+      text: opts.text,
+      fontSizePt: opts.fontSizePt
+    });
+
+    const textNode = document.createElement('span');
+    textNode.className = 'txt';
+    textNode.textContent = opts.text;
+    el.appendChild(textNode);
+
+    const handle = document.createElement('div');
+    handle.className = 'ctl';
+    el.appendChild(handle);
+    makeTextResizable(el, textNode, handle, state);
+
+    // Double-click edits the text. Single click still drags.
+    el.addEventListener('dblclick', (ev) => {
+      if (ev.target.classList.contains('del') || ev.target.classList.contains('ctl')) return;
+      ev.stopPropagation();
+      ev.preventDefault();
       const nv = prompt('Edit text:', state.text);
       if (nv !== null && nv.trim() !== '') {
         state.text = nv.trim();
-        el.textContent = nv.trim();
-        el.appendChild(del);
+        textNode.textContent = nv.trim();
+        layoutOverlay(state);
       }
     });
   }
@@ -316,45 +494,72 @@ function addOverlay(type, opts) {
   const del = document.createElement('div');
   del.className = 'del';
   del.textContent = '×';
-  del.onclick = (ev) => { ev.stopPropagation(); el.remove(); const idx = overlays.indexOf(state); if (idx > -1) overlays.splice(idx, 1); };
+  del.onclick = (ev) => {
+    ev.stopPropagation();
+    el.remove();
+    const idx = overlays.indexOf(state);
+    if (idx > -1) overlays.splice(idx, 1);
+    updateHScroll();
+  };
   el.appendChild(del);
 
   makeDraggable(el, state);
   canvasWrap.appendChild(el);
   overlays.push(state);
+  layoutOverlay(state);
+
+  // Ensure the horizontal strip reflects the current document.
+  updateHScroll();
 }
 
 function makeDraggable(el, state) {
-  let dragging = false, sx = 0, sy = 0, ol = 0, ot = 0;
+  let dragging = false, sx = 0, sy = 0, oXPt = 0, oYPt = 0;
   const down = (x, y) => {
     dragging = true; el.classList.add('dragging');
     sx = x; sy = y;
-    ol = parseFloat(el.style.left); ot = parseFloat(el.style.top);
+    oXPt = state.xPt;
+    oYPt = state.yPt;
   };
   const move = (x, y) => {
     if (!dragging) return;
-    el.style.left = (ol + (x - sx)) + 'px';
-    el.style.top = (ot + (y - sy)) + 'px';
+    // Convert the CSS-pixel delta into points so the drag is
+    // independent of the current zoom.
+    state.xPt = oXPt + (x - sx) / renderScale;
+    state.yPt = oYPt + (y - sy) / renderScale;
+    el.style.left = (state.xPt * renderScale) + 'px';
+    el.style.top  = (state.yPt * renderScale) + 'px';
   };
   const up = () => { dragging = false; el.classList.remove('dragging'); };
 
-  el.addEventListener('mousedown', (e) => { if (e.target.classList.contains('ctl') || e.target.classList.contains('del')) return; down(e.clientX, e.clientY); e.preventDefault(); });
+  el.addEventListener('mousedown', (e) => {
+    if (e.target.classList.contains('ctl') || e.target.classList.contains('del')) return;
+    down(e.clientX, e.clientY); e.preventDefault();
+  });
   window.addEventListener('mousemove', (e) => move(e.clientX, e.clientY));
   window.addEventListener('mouseup', up);
 
-  el.addEventListener('touchstart', (e) => { if (e.target.classList.contains('ctl') || e.target.classList.contains('del')) return; const t = e.touches[0]; down(t.clientX, t.clientY); }, { passive: true });
-  window.addEventListener('touchmove', (e) => { if (!dragging) return; const t = e.touches[0]; move(t.clientX, t.clientY); }, { passive: true });
+  el.addEventListener('touchstart', (e) => {
+    if (e.target.classList.contains('ctl') || e.target.classList.contains('del')) return;
+    const t = e.touches[0]; down(t.clientX, t.clientY);
+  }, { passive: true });
+  window.addEventListener('touchmove', (e) => {
+    if (!dragging) return;
+    const t = e.touches[0]; move(t.clientX, t.clientY);
+  }, { passive: true });
   window.addEventListener('touchend', up);
 }
 
-function makeResizable(el, handle, state) {
-  let resizing = false, sx = 0, sw = 0;
-  const down = (x) => { resizing = true; sx = x; sw = state.w; };
+function makeImageResizable(el, handle, state) {
+  let resizing = false, sx = 0, sWPt = 0;
+  const down = (x) => { resizing = true; sx = x; sWPt = state.wPt; };
   const move = (x) => {
     if (!resizing) return;
-    let nw = Math.max(20, sw + (x - sx));
-    state.w = nw; state.h = nw / state.aspect;
-    el.style.width = state.w + 'px'; el.style.height = state.h + 'px';
+    // CSS-pixel delta → points.
+    let nwPt = Math.max(10, sWPt + (x - sx) / renderScale);
+    state.wPt = nwPt;
+    state.hPt = nwPt / state.aspect;
+    el.style.width  = (state.wPt * renderScale) + 'px';
+    el.style.height = (state.hPt * renderScale) + 'px';
   };
   const up = () => resizing = false;
 
@@ -367,7 +572,32 @@ function makeResizable(el, handle, state) {
   window.addEventListener('touchend', up);
 }
 
+function makeTextResizable(el, textNode, handle, state) {
+  let resizing = false, sx = 0, sSizePt = 0;
+  const down = (x) => { resizing = true; sx = x; sSizePt = state.fontSizePt; };
+  const move = (x) => {
+    if (!resizing) return;
+    // Half a CSS px of drag per unit change, converted to points.
+    const nextPt = Math.max(4, Math.min(200, sSizePt + (x - sx) * 0.5 / renderScale));
+    state.fontSizePt = nextPt;
+    textNode.style.fontSize = (nextPt * renderScale) + 'px';
+    el.style.fontSize = (nextPt * renderScale) + 'px';
+  };
+  const up = () => { resizing = false; };
+
+  handle.addEventListener('mousedown', (e) => { down(e.clientX); e.stopPropagation(); e.preventDefault(); });
+  window.addEventListener('mousemove', (e) => move(e.clientX));
+  window.addEventListener('mouseup', up);
+
+  handle.addEventListener('touchstart', (e) => { const t = e.touches[0]; down(t.clientX); e.stopPropagation(); }, { passive: true });
+  window.addEventListener('touchmove', (e) => { if (!resizing) return; const t = e.touches[0]; move(t.clientX); }, { passive: true });
+  window.addEventListener('touchend', up);
+}
+
 // ---------- export ----------
+// Everything is already in PDF points, so export does not divide by
+// renderScale at all. What the user positioned on screen — at whatever
+// zoom they had — is what lands on the page.
 downloadBtn.onclick = async () => {
   if (!pdfBytes) return;
   downloadBtn.disabled = true;
@@ -375,26 +605,25 @@ downloadBtn.onclick = async () => {
   try {
     const doc = await PDFDocument.load(pdfBytes);
     const helv = await doc.embedFont(StandardFonts.Helvetica);
-    const ptsPerPx = 1 / renderScale;
 
     for (const o of overlays) {
       const pageIdx = o.page - 1;
       const page = doc.getPages()[pageIdx];
       const pdfH = pageDims[o.page].pdfH;
-      const left = parseFloat(o.el.style.left);
-      const top = parseFloat(o.el.style.top);
 
       if (o.type === 'image') {
         const pngBytes = dataUrlToBytes(o.src);
         const png = await doc.embedPng(pngBytes);
-        const w = o.w * ptsPerPx, h = o.h * ptsPerPx;
-        const x = left * ptsPerPx;
-        const y = pdfH - (top * ptsPerPx) - h;
-        page.drawImage(png, { x, y, width: w, height: h });
+        const x = o.xPt;
+        const y = pdfH - o.yPt - o.hPt;   // screen y is top-down; PDF y is bottom-up
+        page.drawImage(png, { x, y, width: o.wPt, height: o.hPt });
       } else {
-        const sizePt = o.fontSize * ptsPerPx;
-        const x = left * ptsPerPx;
-        const y = pdfH - (top * ptsPerPx) - sizePt * 0.85;
+        // The stored fontSizePt is the same unit as pdf-lib's size
+        // parameter, so no conversion is needed. The 0.85 factor lifts
+        // the baseline a touch so the visual centre matches the cursor.
+        const sizePt = o.fontSizePt;
+        const x = o.xPt;
+        const y = pdfH - o.yPt - sizePt * 0.85;
         page.drawText(o.text, { x, y, size: sizePt, font: helv, color: rgb(0.07,0.07,0.07) });
       }
     }
