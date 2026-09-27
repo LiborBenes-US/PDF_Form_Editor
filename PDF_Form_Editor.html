@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PDF Form Editor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<style>
+  :root{
+    --bg:#f4f3f0; --panel:#ffffff; --ink:#1c1b19; --muted:#6b6862;
+    --line:#dedad2; --accent:#8a5a3f; --accent-ink:#ffffff; --danger:#b3492f;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#171614; --panel:#221f1c; --ink:#f1efe9; --muted:#a39d92;
+      --line:#3a352e; --accent:#c98a5f; --accent-ink:#1c1b19; --danger:#e07a5f;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#171614; --panel:#221f1c; --ink:#f1efe9; --muted:#a39d92;
+    --line:#3a352e; --accent:#c98a5f; --accent-ink:#1c1b19; --danger:#e07a5f;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+  }
+  #app{display:flex; min-height:100%; flex-wrap:wrap;}
+  #toolbar{
+    width:300px; flex:0 0 300px; background:var(--panel); border-right:1px solid var(--line);
+    padding:20px 18px; display:flex; flex-direction:column; gap:16px;
+  }
+  h1{color:red; font-size:17px; margin:0 0 2px; letter-spacing:.2px;}
+  .sub{color:var(--muted); font-size:12.5px; margin:0 0 6px; line-height:1.4;}
+  .row{display:flex; flex-direction:column; gap:8px;}
+  .fileBtn{
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    background: var(--bg); border:1px solid var(--line); border-radius:10px;
+    padding:10px 12px; font-size:14px; cursor:pointer; color:var(--ink);
+  }
+  .fileBtn:hover{border-color:var(--accent);}
+  .fname{font-size:12px; color:var(--muted); word-break:break-all;}
+  .chk{display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); cursor:pointer;}
+  #pageNav{display:none; align-items:center; justify-content:center; gap:14px; font-size:13px;}
+  #pageNav button{
+    width:30px; height:30px; border-radius:8px; border:1px solid var(--line);
+    background:var(--bg); color:var(--ink); cursor:pointer; font-size:15px;
+  }
+  input[type=text]{
+    width:100%; padding:10px 11px; border-radius:10px; border:1px solid var(--line);
+    background:var(--bg); color:var(--ink); font-size:14px;
+  }
+  button.plain{
+    padding:10px 12px; border-radius:10px; border:1px solid var(--line);
+    background:var(--bg); color:var(--ink); font-size:14px; cursor:pointer;
+  }
+  button.primary{
+    padding:12px 14px; border-radius:10px; border:none;
+    background:#39ff14; color:var(--accent-ink); font-size:14.5px; font-weight:600; cursor:pointer;
+  }
+  button.primary:disabled{opacity:.4; cursor:not-allowed;}
+  button:hover:not(:disabled){filter:brightness(1.05);}
+  .hint{font-size:11.5px; color:var(--muted); line-height:1.5; margin-top:auto; padding-top:10px; border-top:1px solid var(--line);}
+  #stage{flex:1 1 480px; overflow:auto; padding:24px; display:flex; justify-content:center; align-items:flex-start;}
+  #placeholder{color:var(--muted); font-size:14px; margin-top:60px; text-align:center; max-width:280px;}
+  #canvasWrap{position:relative; background:#fff; box-shadow:0 2px 18px rgba(0,0,0,.18); display:none;}
+  #pdfCanvas{display:block;}
+  .overlay{
+    position:absolute; touch-action:none; cursor:move;
+    border:1.5px dashed transparent;
+  }
+  .overlay:hover, .overlay.dragging{border-color:var(--accent);}
+  .overlay img{width:100%; height:100%; display:block; pointer-events:none;}
+  .text-overlay{
+    white-space:nowrap; font-family:Helvetica,Arial,sans-serif; color:#111;
+    display:flex; align-items:center; padding:1px 3px; user-select:none;
+  }
+  .ctl{
+    position:absolute; width:16px; height:16px; background:var(--accent); border-radius:50%;
+    right:-8px; bottom:-8px; cursor:nwse-resize; touch-action:none;
+  }
+  .del{
+    position:absolute; top:-11px; right:-11px; width:20px; height:20px; border-radius:50%;
+    background:var(--danger); color:#fff; border:2px solid var(--panel); font-size:12px;
+    line-height:16px; text-align:center; cursor:pointer; font-weight:bold;
+  }
+  @media (max-width:760px){
+    #toolbar{width:100%; flex:1 1 100%; border-right:none; border-bottom:1px solid var(--line);}
+    #stage{flex:1 1 100%; padding:14px;}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="toolbar">
+    <div>
+      <h1>🖊️ PDF Form Editor</h1>
+      <p class="sub">Runs fully in your browser. Your PDF, sensitive data, & signature never leave this device.</p>
+    </div>
+
+    <div class="row">
+      <label class="fileBtn">📄 Load PDF<input type="file" id="pdfInput" accept="application/pdf" hidden></label>
+      <span class="fname" id="pdfName"></span>
+    </div>
+
+    <div id="pageNav">
+      <button id="prevPage">‹</button>
+      <span id="pageIndicator">Page 1 / 1</span>
+      <button id="nextPage">›</button>
+    </div>
+
+    <div class="row">
+      <label class="fileBtn">✍️ Add signature image<input type="file" id="imgInput" accept="image/*" hidden></label>
+      <label class="chk"><input type="checkbox" id="bgToggle" checked> Remove light background</label>
+    </div>
+
+    <div class="row">
+      <input type="text" id="textInput" placeholder="Type text (e.g. your name, a date)…">
+      <button class="plain" id="addTextBtn">+ Place text on page</button>
+    </div>
+
+    <div class="row">
+      <button class="primary" id="downloadBtn" disabled>⬇️ Download PDF</button>
+    </div>
+
+    <p class="hint">Drag items to position them. Drag the round handle to resize an image. Click a text box's text to edit it. Click the × to remove anything.</p>
+  </div>
+
+  <div id="stage">
+    <div id="placeholder">Load a PDF to get started. Then add your signature image and type in any text fields you need — drag them into place, and download.</div>
+    <div id="canvasWrap">
+      <canvas id="pdfCanvas"></canvas>
+    </div>
+  </div>
+</div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js";
+
+const { PDFDocument, StandardFonts, rgb } = PDFLib;
+
+let pdfBytes = null;        // original file bytes (for pdf-lib at export time)
+let pdfjsDoc = null;        // pdf.js document (for rendering)
+let numPages = 1;
+let currentPage = 1;
+let renderScale = 1.3;      // constant across all pages
+let pageDims = {};          // { n: { pdfW, pdfH } } native point size per page
+const overlays = [];        // { type:'image'|'text', page, el, ... }
+
+const canvas = document.getElementById('pdfCanvas');
+const ctx = canvas.getContext('2d');
+const canvasWrap = document.getElementById('canvasWrap');
+const placeholder = document.getElementById('placeholder');
+const pageNav = document.getElementById('pageNav');
+const pageIndicator = document.getElementById('pageIndicator');
+const downloadBtn = document.getElementById('downloadBtn');
+
+document.getElementById('pdfInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  document.getElementById('pdfName').textContent = file.name;
+  pdfBytes = new Uint8Array(await file.arrayBuffer());
+  pdfjsDoc = await pdfjsLib.getDocument({ data: pdfBytes.slice() }).promise;
+  numPages = pdfjsDoc.numPages;
+
+  // fit scale to first page width (~ up to 760px)
+  const p1 = await pdfjsDoc.getPage(1);
+  const vp1 = p1.getViewport({ scale: 1 });
+  renderScale = Math.min(760 / vp1.width, 1.8);
+
+  pageDims = {};
+  for (let i = 1; i <= numPages; i++) {
+    const pg = await pdfjsDoc.getPage(i);
+    const vp = pg.getViewport({ scale: 1 });
+    pageDims[i] = { pdfW: vp.width, pdfH: vp.height };
+  }
+
+  currentPage = 1;
+  placeholder.style.display = 'none';
+  canvasWrap.style.display = 'inline-block';
+  pageNav.style.display = numPages > 1 ? 'flex' : 'none';
+  downloadBtn.disabled = false;
+  await renderPage(currentPage);
+});
+
+document.getElementById('prevPage').onclick = () => { if (currentPage > 1) { currentPage--; renderPage(currentPage); refreshOverlayVisibility(); } };
+document.getElementById('nextPage').onclick = () => { if (currentPage < numPages) { currentPage++; renderPage(currentPage); refreshOverlayVisibility(); } };
+
+async function renderPage(n) {
+  const page = await pdfjsDoc.getPage(n);
+  const viewport = page.getViewport({ scale: renderScale });
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  canvasWrap.style.width = viewport.width + 'px';
+  canvasWrap.style.height = viewport.height + 'px';
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  pageIndicator.textContent = `Page ${n} / ${numPages}`;
+  refreshOverlayVisibility();
+}
+
+function refreshOverlayVisibility() {
+  overlays.forEach(o => { o.el.style.display = (o.page === currentPage) ? '' : 'none'; });
+}
+
+// ---------- signature image ----------
+document.getElementById('imgInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file || !pdfjsDoc) return;
+  const dataUrl = await fileToDataUrl(file);
+  const img = await loadImage(dataUrl);
+
+  let finalSrc = dataUrl;
+  if (document.getElementById('bgToggle').checked) {
+    finalSrc = removeLightBackground(img);
+  }
+
+  const aspect = img.width / img.height;
+  const w = Math.min(160, canvas.width * 0.35);
+  const h = w / aspect;
+  addOverlay('image', { src: finalSrc, w, h, aspect });
+  e.target.value = '';
+});
+
+function removeLightBackground(img) {
+  const off = document.createElement('canvas');
+  off.width = img.width; off.height = img.height;
+  const octx = off.getContext('2d');
+  octx.drawImage(img, 0, 0);
+  const data = octx.getImageData(0, 0, off.width, off.height);
+  const d = data.data;
+  const lo = 130, hi = 195; // luminance band: below lo = opaque ink, above hi = transparent
+  for (let i = 0; i < d.length; i += 4) {
+    const lum = (d[i] + d[i+1] + d[i+2]) / 3;
+    let a = (hi - lum) / (hi - lo);
+    a = Math.max(0, Math.min(1, a));
+    d[i+3] = Math.round(a * 255);
+  }
+  octx.putImageData(data, 0, 0);
+  return off.toDataURL('image/png');
+}
+
+function fileToDataUrl(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
+function loadImage(src) {
+  return new Promise((res, rej) => {
+    const im = new Image();
+    im.onload = () => res(im);
+    im.onerror = rej;
+    im.src = src;
+  });
+}
+
+// ---------- text fields ----------
+document.getElementById('addTextBtn').onclick = () => {
+  const val = document.getElementById('textInput').value.trim();
+  if (!val || !pdfjsDoc) return;
+  addOverlay('text', { text: val, fontSize: 14 });
+  document.getElementById('textInput').value = '';
+};
+
+// ---------- overlay creation & drag/resize ----------
+function addOverlay(type, opts) {
+  const el = document.createElement('div');
+  el.className = 'overlay' + (type === 'text' ? ' text-overlay' : '');
+  const startLeft = canvas.width * 0.15;
+  const startTop = canvas.height * 0.5;
+
+  const state = { type, page: currentPage, el };
+
+  if (type === 'image') {
+    el.style.width = opts.w + 'px';
+    el.style.height = opts.h + 'px';
+    el.style.left = startLeft + 'px';
+    el.style.top = startTop + 'px';
+    const img = document.createElement('img');
+    img.src = opts.src;
+    el.appendChild(img);
+    Object.assign(state, { w: opts.w, h: opts.h, aspect: opts.aspect, src: opts.src });
+
+    const handle = document.createElement('div');
+    handle.className = 'ctl';
+    el.appendChild(handle);
+    makeResizable(el, handle, state);
+  } else {
+    el.style.left = startLeft + 'px';
+    el.style.top = startTop + 'px';
+    el.style.fontSize = opts.fontSize + 'px';
+    el.textContent = opts.text;
+    Object.assign(state, { text: opts.text, fontSize: opts.fontSize });
+    el.addEventListener('click', (ev) => {
+      if (ev.target.classList.contains('del')) return;
+      const nv = prompt('Edit text:', state.text);
+      if (nv !== null && nv.trim() !== '') { state.text = nv.trim(); el.firstChild ? (el.textContent = nv.trim()) : null; el.textContent = nv.trim(); el.appendChild(del); }
+    });
+  }
+
+  const del = document.createElement('div');
+  del.className = 'del';
+  del.textContent = '×';
+  del.onclick = (ev) => { ev.stopPropagation(); el.remove(); const idx = overlays.indexOf(state); if (idx > -1) overlays.splice(idx, 1); };
+  el.appendChild(del);
+
+  makeDraggable(el, state);
+  canvasWrap.appendChild(el);
+  overlays.push(state);
+}
+
+function makeDraggable(el, state) {
+  let dragging = false, sx = 0, sy = 0, ol = 0, ot = 0;
+  const down = (x, y) => {
+    dragging = true; el.classList.add('dragging');
+    sx = x; sy = y;
+    ol = parseFloat(el.style.left); ot = parseFloat(el.style.top);
+  };
+  const move = (x, y) => {
+    if (!dragging) return;
+    el.style.left = (ol + (x - sx)) + 'px';
+    el.style.top = (ot + (y - sy)) + 'px';
+  };
+  const up = () => { dragging = false; el.classList.remove('dragging'); };
+
+  el.addEventListener('mousedown', (e) => { if (e.target.classList.contains('ctl') || e.target.classList.contains('del')) return; down(e.clientX, e.clientY); e.preventDefault(); });
+  window.addEventListener('mousemove', (e) => move(e.clientX, e.clientY));
+  window.addEventListener('mouseup', up);
+
+  el.addEventListener('touchstart', (e) => { if (e.target.classList.contains('ctl') || e.target.classList.contains('del')) return; const t = e.touches[0]; down(t.clientX, t.clientY); }, { passive: true });
+  window.addEventListener('touchmove', (e) => { if (!dragging) return; const t = e.touches[0]; move(t.clientX, t.clientY); }, { passive: true });
+  window.addEventListener('touchend', up);
+}
+
+function makeResizable(el, handle, state) {
+  let resizing = false, sx = 0, sw = 0;
+  const down = (x) => { resizing = true; sx = x; sw = state.w; };
+  const move = (x) => {
+    if (!resizing) return;
+    let nw = Math.max(20, sw + (x - sx));
+    state.w = nw; state.h = nw / state.aspect;
+    el.style.width = state.w + 'px'; el.style.height = state.h + 'px';
+  };
+  const up = () => resizing = false;
+
+  handle.addEventListener('mousedown', (e) => { down(e.clientX); e.stopPropagation(); e.preventDefault(); });
+  window.addEventListener('mousemove', (e) => move(e.clientX));
+  window.addEventListener('mouseup', up);
+
+  handle.addEventListener('touchstart', (e) => { const t = e.touches[0]; down(t.clientX); e.stopPropagation(); }, { passive: true });
+  window.addEventListener('touchmove', (e) => { if (!resizing) return; const t = e.touches[0]; move(t.clientX); }, { passive: true });
+  window.addEventListener('touchend', up);
+}
+
+// ---------- export ----------
+downloadBtn.onclick = async () => {
+  if (!pdfBytes) return;
+  downloadBtn.disabled = true;
+  downloadBtn.textContent = 'Working…';
+  try {
+    const doc = await PDFDocument.load(pdfBytes);
+    const helv = await doc.embedFont(StandardFonts.Helvetica);
+    const ptsPerPx = 1 / renderScale;
+
+    for (const o of overlays) {
+      const pageIdx = o.page - 1;
+      const page = doc.getPages()[pageIdx];
+      const pdfH = pageDims[o.page].pdfH;
+      const left = parseFloat(o.el.style.left);
+      const top = parseFloat(o.el.style.top);
+
+      if (o.type === 'image') {
+        const pngBytes = dataUrlToBytes(o.src);
+        const png = await doc.embedPng(pngBytes);
+        const w = o.w * ptsPerPx, h = o.h * ptsPerPx;
+        const x = left * ptsPerPx;
+        const y = pdfH - (top * ptsPerPx) - h;
+        page.drawImage(png, { x, y, width: w, height: h });
+      } else {
+        const sizePt = o.fontSize * ptsPerPx;
+        const x = left * ptsPerPx;
+        const y = pdfH - (top * ptsPerPx) - sizePt * 0.85;
+        page.drawText(o.text, { x, y, size: sizePt, font: helv, color: rgb(0.07,0.07,0.07) });
+      }
+    }
+
+    const outBytes = await doc.save();
+    const blob = new Blob([outBytes], { type: 'application/pdf' });
+    await saveFile('completed.pdf', blob);
+  } catch (err) {
+    alert('Something went wrong creating the PDF: ' + err.message);
+    console.error(err);
+  }
+  downloadBtn.disabled = false;
+  downloadBtn.textContent = '⬇️ Download completed PDF';
+};
+
+// Saves a file whether we're running as a published Claude artifact
+// (which requires the sandboxed "downloads" capability) or as a plain
+// local HTML file / browser tab (which can just use a normal <a download>).
+async function saveFile(filename, blob) {
+  let downloads = null;
+  try {
+    if (window.claude && typeof window.claude.use === 'function') {
+      downloads = await window.claude.use('downloads');
+    }
+  } catch (e) { downloads = null; }
+
+  if (downloads) {
+    await downloads.save({ filename, data: blob });
+    return;
+  }
+  // Fallback: ordinary browser download (works when this file is opened
+  // directly, e.g. saved to your computer, or double-clicked from disk).
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+function dataUrlToBytes(dataUrl) {
+  const base64 = dataUrl.split(',')[1];
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+</script>
+</body>
+</html>
